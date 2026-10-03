@@ -88,7 +88,7 @@ function mergeConfig(c){
 
 /* ============ Estado ============ */
 const S={config:null,patients:[],gastos:[],ses:{},view:'agenda',ag:'semana',cursor:TODAY,month:monthKey(TODAY),
-  q:'',filtroEstado:'',comps:[],fileCache:{},awaitPay:new Set(),visible:{},edit:null,ready:false,downloads:null};
+  q:'',filtroEstado:'',comps:[],facturas:[],facturasSim:[],firma:'',fileCache:{},awaitPay:new Set(),visible:{},edit:null,ready:false,downloads:null};
 const list=k=>S.config.lists[k]||[];
 const item=(k,id)=>list(k).find(i=>i.id===id);
 const pat=id=>S.patients.find(p=>p.id===id);
@@ -244,6 +244,8 @@ function applyDoc(id,data){
   else if(id==='gastos') S.gastos=data?.items||[];
   else if(id==='comprobantes') S.comps=data?.items||[];
   else if(id==='respaldos') S.respaldos=data?.items||[];
+  else if(id==='firma') S.firma=data?.data||'';
+  else if(id==='facturasSim') S.facturasSim=data?.items||[];
   else if(id.startsWith('ses-')){ if(data) S.ses[id]=data; else delete S.ses[id]; }
 }
 const saveConfig=()=>Store.save('config',S.config);
@@ -736,6 +738,237 @@ function facturacionPanel(){
     ${Store.fb?'':'<p class="hint" style="margin-top:10px">En esta versión de prueba no se puede conectar con ARCA: probalo en la versión real de GitHub.</p>'}
     </div></section>`;
 }
+/* ============ PDF de la factura (formato del modelo de ARCA) ============ */
+const LIBS={jspdf:'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',qr:'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'};
+function cargarScript(src){return new Promise((res,rej)=>{if(document.querySelector(`script[src="${src}"]`)){res();return}const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('No se pudo cargar la herramienta para armar el PDF. Revisá la conexión a internet.'));document.head.appendChild(s)})}
+async function libsPDF(){
+  if(!window.jspdf) await cargarScript(LIBS.jspdf);
+  if(!window.qrcode) await cargarScript(LIBS.qr);
+}
+const nro2=n=>(Math.round(Number(n||0)*100)/100).toFixed(2).replace('.',',');
+const pad0=(n,l)=>String(n).padStart(l,'0');
+const ddmmaaaa=s=>{s=String(s||'');if(/^\d{8}$/.test(s))return `${s.slice(6,8)}/${s.slice(4,6)}/${s.slice(0,4)}`;if(/^\d{4}-\d{2}-\d{2}/.test(s))return `${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}`;return s};
+const isoDe=s=>{s=String(s||'');return /^\d{8}$/.test(s)?`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`:s.slice(0,10)};
+function qrTexto(f){
+  const d={ver:1,fecha:isoDe(f.fecha),cuit:Number(f.cuitEmisor),ptoVta:Number(f.ptoVta),tipoCmp:11,nroCmp:Number(f.numero),importe:Number(f.importe),moneda:'PES',ctz:1,tipoDocRec:Number(f.docTipo),nroDocRec:Number(f.docNro),tipoCodAut:'E',codAut:Number(f.cae)};
+  return 'https://www.afip.gob.ar/fe/qr/?p='+btoa(JSON.stringify(d));
+}
+/* f: datos de la factura (incluye emisor, detalle, receptor) */
+async function facturaPDF(f){
+  await libsPDF();
+  const {jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
+  const E=f.emisor||{};const L=10,R=200,W=R-L;let y=10;
+  doc.setDrawColor(0);doc.setLineWidth(.3);
+  const box=(x,yy,w,h)=>doc.rect(x,yy,w,h);
+  const txt=(t,x,yy,o={})=>{doc.setFont('helvetica',o.b?'bold':o.i?'italic':'normal');doc.setFontSize(o.s||9);doc.text(String(t??''),x,yy,o.a?{align:o.a}:undefined)};
+  const lab=(l,v,x,yy,s=9)=>{doc.setFont('helvetica','bold');doc.setFontSize(s);doc.text(l,x,yy);const w=doc.getTextWidth(l+' ');doc.setFont('helvetica','normal');doc.text(String(v??''),x+w,yy)};
+  // Encabezado
+  box(L,y,W,10);txt('ORIGINAL',105,y+7,{b:1,s:13,a:'center'});y+=10;
+  const hTop=52;box(L,y,W,hTop);doc.line(105,y+16,105,y+hTop);
+  box(98,y,14,16);txt('C',105,y+9,{b:1,s:20,a:'center'});txt('COD. 011',105,y+14,{b:1,s:6,a:'center'});
+  doc.setFont('helvetica','bold');doc.setFontSize(10);
+  doc.text(doc.splitTextToSize(String(E.nombreFantasia||E.razonSocial||'').toUpperCase(),80),55,y+10,{align:'center'});
+  lab('Razón Social:',E.razonSocial||'',L+3,y+27);
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Domicilio Comercial:',L+3,y+36);
+  doc.setFont('helvetica','normal');doc.text(doc.splitTextToSize(E.domicilio||'',52),L+38,y+36);
+  lab('Condición frente al IVA:',E.condIva||'Responsable Monotributo',L+3,y+48);
+  txt('FACTURA',114,y+12,{b:1,s:20});
+  lab('Punto de Venta:',pad0(f.ptoVta,5),114,y+22,9.5);lab('Comp. Nro:',pad0(f.numero,8),160,y+22,9.5);
+  lab('Fecha de Emisión:',ddmmaaaa(f.fecha),114,y+28,9.5);
+  lab('CUIT:',f.cuitEmisor||'',114,y+37);lab('Ingresos Brutos:',E.iibb||'',114,y+42);lab('Fecha de Inicio de Actividades:',ddmmaaaa(E.inicioAct),114,y+47);
+  y+=hTop;
+  box(L,y,W,9);lab('Período Facturado Desde:',ddmmaaaa(f.servDesde),L+3,y+6,9.5);lab('Hasta:',ddmmaaaa(f.servHasta),88,y+6,9.5);lab('Fecha de Vto. para el pago:',ddmmaaaa(f.vtoPago||f.fecha),128,y+6,9.5);y+=9;
+  box(L,y,W,24);lab('DNI:',f.docNro,L+2,y+5,8.5);lab('Apellido y Nombre / Razón Social:',String(f.receptor||'').toUpperCase(),88,y+5,8.5);
+  lab('Condición frente al IVA:','Consumidor Final',L+2,y+12,8);lab('Domicilio:','',120,y+12,8);lab('Condición de venta:',f.condVenta||'',L+2,y+19,8);y+=27;
+  // Tabla
+  const cols=[[L,14,'Código'],[L+14,58,'Producto / Servicio'],[L+72,20,'Cantidad'],[L+92,18,'U. Medida'],[L+110,24,'Precio Unit.'],[L+134,14,'% Bonif'],[L+148,20,'Imp. Bonif.'],[L+168,22,'Subtotal']];
+  doc.setFillColor(204,204,204);doc.rect(L,y,W,7,'FD');
+  cols.forEach(([x,w,t],i)=>{if(i)doc.line(x,y,x,y+7);txt(t,i===1?x+2:x+w/2,y+5,{b:1,s:7.5,a:i===1?undefined:'center'})});y+=10;
+  for(const it of (f.detalle||[])){
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);const lines=doc.splitTextToSize(it.texto||'',55);
+    doc.text(lines,L+16,y);txt('1,00',L+90,y,{s:7.5,a:'right'});txt('unidades',L+94,y,{s:6.5});
+    txt(nro2(it.importe),L+133,y,{s:7.5,a:'right'});txt('0,00',L+136,y,{s:7.5});txt('0,00',L+167,y,{s:7.5,a:'right'});txt(nro2(it.importe),R-1,y,{s:7.5,a:'right'});
+    y+=lines.length*3.3+2;
+  }
+  if(f.firma){try{const pr=doc.getImageProperties(f.firma);const fw=38,fh=Math.min(28,fw*pr.height/pr.width);doc.addImage(f.firma,R-fw-6,Math.min(y,205),fw,fh)}catch(e){}}
+  // Totales
+  y=Math.max(y+30,215);box(L,y,W,26);
+  lab('Subtotal: $','',150,y+8,9.5);txt(nro2(f.importe),R-3,y+8,{b:1,s:9.5,a:'right'});
+  lab('Importe Otros Tributos: $','',127,y+15,9.5);txt('0,00',R-3,y+15,{b:1,s:9.5,a:'right'});
+  lab('Importe Total: $','',143,y+22,10.5);txt(nro2(f.importe),R-3,y+22,{b:1,s:10.5,a:'right'});y+=30;
+  if(E.leyendaPie){box(L,y,W,9);txt(`"${E.leyendaPie}"`,105,y+6,{i:1,s:9,a:'center'});y+=11}
+  // Pie con QR y CAE
+  const qr=window.qrcode(0,'M');qr.addData(qrTexto(f));qr.make();doc.addImage(qr.createDataURL(4,0),'GIF',L,y+2,30,30);
+  txt('ARCA',L+34,y+10,{b:1,s:16});txt('AGENCIA DE RECAUDACIÓN Y CONTROL ADUANERO',L+34,y+13.5,{s:4.5});
+  txt('Comprobante Autorizado',L+34,y+21,{b:1,i:1,s:8});
+  doc.setFont('helvetica','bolditalic');doc.setFontSize(5.5);doc.text('Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operación',L+34,y+26);
+  txt('Pág. 1/1',105,y+8,{b:1,s:9,a:'center'});
+  lab('CAE N°:',f.cae||'',150,y+8,10);lab('Fecha de Vto. de CAE:',ddmmaaaa(f.caeVence),132,y+14,9.5);
+  // Marca de agua para pruebas
+  const marca=f.simulada?'SIMULACIÓN · SIN VALIDEZ FISCAL':f.entorno!=='prod'?'HOMOLOGACIÓN · SIN VALIDEZ FISCAL':'';
+  if(marca){doc.setTextColor(200,60,60);doc.setFont('helvetica','bold');doc.setFontSize(26);doc.saveGraphicsState&&doc.saveGraphicsState();
+    try{doc.setGState(new doc.GState({opacity:.18}))}catch(e){}
+    doc.text(marca,105,160,{align:'center',angle:30});doc.restoreGraphicsState&&doc.restoreGraphicsState();doc.setTextColor(0)}
+  return doc;
+}
+function nombrePDF(f){return `Factura-C-${pad0(f.ptoVta,5)}-${pad0(f.numero,8)}${f.simulada?'-SIMULACION':f.entorno!=='prod'?'-PRUEBA':''}.pdf`}
+async function descargarPDF(f){
+  try{
+    toast('Armando el PDF…');
+    const doc=await facturaPDF(f);const name=nombrePDF(f);
+    if(S.downloads){try{await S.downloads.save({filename:name,data:doc.output('arraybuffer')});return}catch(e){if(e?.code==='cancelled')return}}
+    doc.save(name);
+  }catch(e){toast(e.message||'No se pudo armar el PDF.')}
+}
+
+/* ============ Facturas ============ */
+const PLANTILLA_DEF='Sesión individual psicoterapia prestado a {paciente}[, número afiliado a {prepaga}: {afiliado}] Fecha: {fecha} {profesional}';
+const emisorCfg=()=>({condIva:'Responsable Monotributo',plantilla:PLANTILLA_DEF,...(S.config?.general?.emisor||{})});
+const entornoFac=()=>Store.fb?(S.config?.general?.facturacion?.entorno||'homo'):'sim';
+const fechaCobro=s=>String(s.pagadoEl||s.fecha);
+function facturasActivas(){
+  if(!Store.fb) return S.facturasSim||[];
+  const env=entornoFac();return (S.facturas||[]).filter(f=>f.entorno===env);
+}
+function sesionesFacturadas(){const set=new Set();for(const f of facturasActivas()) if(f.estado==='emitida'||f.ok) for(const id of (f.sesiones||[])) set.add(id);return set}
+function textoLinea(s,p){
+  const E=emisorCfg();let t=E.plantilla||PLANTILLA_DEF;
+  const conPrepaga=!!(p?.prepaga&&p?.afiliado);
+  t=t.replace(/\[([^\]]*)\]/g,(m,inner)=>conPrepaga?inner:'');
+  const nombre=[p?.nombre,p?.apellido].filter(Boolean).join(' ');
+  return t.replace(/\{paciente\}/g,nombre).replace(/\{prepaga\}/g,p?.prepaga||'').replace(/\{afiliado\}/g,p?.afiliado||'')
+    .replace(/\{fecha\}/g,fmtDMY(s.fecha)).replace(/\{profesional\}/g,E.profesional||'').replace(/\s+/g,' ').trim();
+}
+function fmtDMY(s){return `${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}`}
+const aaaammdd=s=>s.replace(/-/g,'');
+/* Sesiones cobradas en el mes y todavía sin facturar, agrupadas por paciente */
+function porFacturar(mes){
+  const fact=sesionesFacturadas();const by={};
+  for(const d of Object.values(S.ses)) for(const s of Object.values(d.items||{})){
+    if(s.oculta||!pidVivo(s.pid)||fact.has(s.id)) continue;
+    if(item('estadosPago',s.pago)?.tipo!=='cobrado') continue;
+    if(monthKey(fechaCobro(s))!==mes) continue;
+    (by[s.pid]=by[s.pid]||[]).push(s);
+  }
+  return Object.entries(by).map(([pid,ss])=>{ss.sort((a,b)=>a.fecha.localeCompare(b.fecha));return {pid,p:pat(pid),ss,total:ss.reduce((a,s)=>a+montoOf(s),0)}})
+    .sort((a,b)=>sortName(a.p).localeCompare(sortName(b.p)));
+}
+function faltantesEmisor(){const E=emisorCfg();return [['razonSocial','razón social'],['domicilio','domicilio comercial'],['inicioAct','fecha de inicio de actividades'],['iibb','ingresos brutos']].filter(([k])=>!String(E[k]||'').trim()).map(([,l])=>l)}
+function dniValido(p){return /^\d{7,8}$/.test(String(p?.dni||'').replace(/\D/g,''))}
+function claveFactura(pid,mes,ss){let h=0;for(const c of ss.map(s=>s.id).sort().join('|'))h=(h*31+c.charCodeAt(0))>>>0;return `${pid}_${mes}_${h.toString(36)}`}
+function datosFactura(g,mes){
+  const p=g.p;const E=emisorCfg();const medios={};for(const s of g.ss){const m=s.medio||p?.medioPago||'';medios[m]=(medios[m]||0)+1}
+  const medio=Object.entries(medios).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+  return {
+    clave:claveFactura(g.pid,mes,g.ss),ptoVta:Number(facCfg().ptoVta)||1,docTipo:96,docNro:String(p?.dni||'').replace(/\D/g,''),
+    importe:Math.round(g.total*100)/100,servDesde:aaaammdd(g.ss[0].fecha),servHasta:aaaammdd(g.ss[g.ss.length-1].fecha),condIva:5,
+    receptor:[p?.apellido,p?.nombre].filter(Boolean).join(' '),pid:g.pid,sesiones:g.ss.map(s=>s.id),
+    detalle:g.ss.map(s=>({texto:textoLinea(s,p),importe:montoOf(s),fecha:s.fecha})),
+    condVenta:item('mediosPago',medio)?.nombre||'',emisor:{...E,plantilla:undefined},mes
+  };
+}
+function viewFacturas(){
+  const m=S.facMes||(S.facMes=monthKey(TODAY));const [y,mm]=m.split('-');
+  const grupos=porFacturar(m);const env=entornoFac();
+  const emitidas=facturasActivas().filter(f=>(f.estado==='emitida'||f.ok)&&(f.mes||monthKey(isoDe(f.fecha)))===m).sort((a,b)=>(b.numero||0)-(a.numero||0));
+  const falt=faltantesEmisor();
+  const aviso=env==='sim'?`<div class="notice">${ICONS.info}<p>Versión de prueba: las facturas se <b>simulan</b> (no se envían a ARCA) para que puedas probar el circuito completo.</p></div>`
+    :env==='homo'?`<div class="notice warn">${ICONS.info}<p>Estás en <b>homologación</b>: las facturas son de prueba y no tienen validez fiscal.</p></div>`:'';
+  const rows=grupos.map(g=>{const ok=dniValido(g.p);return `<tr><td><b>${esc(fullName(g.p))}</b><div class="small muted">${ok?'DNI '+esc(g.p.dni):'<span class="warn-txt">Falta el DNI</span>'}${g.p?.prepaga?' · '+esc(g.p.prepaga):''}</div></td>
+    <td>${g.ss.map(s=>fmtShort(s.fecha)).join(', ')}</td><td class="num">${g.ss.length}</td><td class="num"><b>${money(g.total)}</b></td>
+    <td class="num">${ok?`<button class="btn primary sm" data-a="fac-prev" data-pid="${esc(g.pid)}">Revisar y emitir</button>`:`<button class="btn sm" data-a="pac-open" data-id="${esc(g.pid)}">Completar DNI</button>`}</td></tr>`}).join('');
+  const em=emitidas.map(f=>`<tr><td data-v="${f.numero}">${pad0(f.ptoVta,5)}-${pad0(f.numero,8)}</td><td>${ddmmaaaa(f.fecha)}</td><td>${esc(f.receptor||fullName(pat(f.pid)))}</td><td class="num">${money(f.importe)}</td><td class="small">${esc(f.cae||'')}</td>
+    <td class="num"><button class="btn sm" data-a="fac-pdf" data-id="${esc(f.id||f.clave)}">PDF</button></td></tr>`).join('');
+  return `<div class="view-head"><div><h1>Facturas de ${MESES[Number(mm)-1]} ${y}</h1><p class="sub">Una Factura C por paciente con las sesiones <b>cobradas</b> en el mes que todavía no se facturaron.</p></div>
+    <div class="btn-group"><button class="btn icon" data-a="fac-mes" data-n="-1" aria-label="Mes anterior">‹</button><button class="btn" data-a="fac-mes" data-n="0">Este mes</button><button class="btn icon" data-a="fac-mes" data-n="1" aria-label="Mes siguiente">›</button></div></div>
+    ${aviso}
+    ${falt.length?`<div class="notice warn">${ICONS.info}<p style="flex:1">Faltan tus datos de emisor: ${falt.join(', ')}.</p><button class="btn sm" data-a="nav" data-v="config">Completar en Configuración</button></div>`:''}
+    <div class="panel"><div class="panel-head"><h2>Para facturar</h2><span class="small muted">${grupos.length?`${grupos.length} ${grupos.length===1?'paciente':'pacientes'}, ${money(grupos.reduce((a,g)=>a+g.total,0))}`:''}</span></div>
+    <div class="scroll"><table data-sort="fac-pend"><thead><tr><th>Paciente</th><th data-nosort>Sesiones cobradas</th><th class="num">Cant.</th><th class="num">Total</th><th data-nosort></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" class="muted">No hay sesiones cobradas sin facturar en este mes.</td></tr>'}</tbody></table></div></div>
+    <div class="panel"><div class="panel-head"><h2>Facturas emitidas de este mes</h2></div>
+    <div class="scroll"><table data-sort="fac-emit"><thead><tr><th>Número</th><th>Fecha</th><th>Receptor</th><th class="num">Importe</th><th>CAE</th><th data-nosort></th></tr></thead>
+    <tbody>${em||'<tr><td colspan="6" class="muted">Todavía no hay facturas emitidas en este mes.</td></tr>'}</tbody></table></div></div>`;
+}
+function facPreview(pid){
+  const m=S.facMes;const g=porFacturar(m).find(x=>x.pid===pid);if(!g)return;
+  const d=datosFactura(g,m);S.facDraft=d;const env=entornoFac();
+  openDlg(`<div class="dlg-head"><div><h2>Vista previa de la Factura C</h2><p class="muted small">${env==='prod'?'<b class="neg-txt">Factura real: se envía a ARCA y no se puede borrar.</b>':env==='homo'?'Homologación: factura de prueba, sin validez fiscal.':'Simulación: no se envía a ARCA.'}</p></div><button class="btn ghost icon" data-a="dlg-close" aria-label="Cerrar">✕</button></div>
+  <div class="dlg-body"><dl class="fac-dl">
+    <dt>Receptor</dt><dd>${esc(d.receptor.toUpperCase())}</dd><dt>DNI</dt><dd>${esc(d.docNro)}</dd><dt>Condición frente al IVA</dt><dd>Consumidor Final</dd>
+    <dt>Período facturado</dt><dd>${ddmmaaaa(d.servDesde)} al ${ddmmaaaa(d.servHasta)}</dd><dt>Condición de venta</dt><dd>${esc(d.condVenta||'—')}</dd><dt>Punto de venta</dt><dd>${pad0(d.ptoVta,5)}</dd></dl>
+    <div class="fac-lines">${d.detalle.map(it=>`<div class="fac-line"><span>${esc(it.texto)}</span><b>${money(it.importe)}</b></div>`).join('')}</div>
+    <div class="fac-total"><span>Importe total</span><b>${money(d.importe)}</b></div>
+    <p class="hint">Revisá los datos antes de emitir. Si algo está mal, cerrá esta ventana y corregilo en la ficha del paciente o en Configuración.</p></div>
+  <div class="dlg-foot"><span></span><div class="btn-group"><button class="btn" data-a="dlg-close">Cancelar</button><button class="btn primary" data-a="fac-emit" id="facEmitBtn">Emitir Factura C</button></div></div>`);
+}
+async function facEmitir(){
+  const d=S.facDraft;if(!d)return;const btn=document.getElementById('facEmitBtn');if(btn){btn.disabled=true;btn.textContent='Emitiendo…'}
+  try{
+    let f;
+    if(!Store.fb){
+      const ult=(S.facturasSim||[]).reduce((a,x)=>Math.max(a,x.numero||0),0);
+      f={...d,id:'sim-'+d.clave,ok:true,estado:'emitida',entorno:'sim',simulada:true,tipo:11,numero:ult+1,fecha:aaaammdd(TODAY),vtoPago:aaaammdd(TODAY),cae:String(Date.now()).padEnd(14,'0').slice(0,14),caeVence:aaaammdd(addDays(TODAY,10)),cuitEmisor:'20123456786'};
+      S.facturasSim=[...(S.facturasSim||[]),f];Store.save('facturasSim',{items:S.facturasSim});
+    } else {
+      const r=await llamarServidor({accion:'emitir',...d,detalle:undefined,emisor:undefined,condVenta:undefined,mes:undefined});
+      if(r.entorno&&r.entorno!==entornoFac()){S.config.general.facturacion={...facCfg(),entorno:r.entorno};saveConfig()}
+      f={...d,...r,id:`${r.entorno}-${d.clave}`,vtoPago:r.fecha};
+      {const reg=JSON.parse(JSON.stringify({...f,ok:true,estado:'emitida'}));delete reg.id;await FB.fns.setDoc(FB.facturaRef(f.id),reg,{merge:true}).catch(()=>{});}
+      if(!S.facturas.some(x=>x.id===f.id)) S.facturas=[...S.facturas,f];
+    }
+    closeDlg();render();toast(`Factura C N.º ${pad0(f.ptoVta,5)}-${pad0(f.numero,8)} emitida`);
+    descargarPDF({...f,firma:S.firma});
+  }catch(e){if(btn){btn.disabled=false;btn.textContent='Emitir Factura C'}
+    const box=document.querySelector('#dlg .dlg-body');if(box)box.insertAdjacentHTML('afterbegin',`<div class="notice warn">${ICONS.info}<p>${esc(e.message)}</p></div>`)}
+}
+function facturaPorId(id){return facturasActivas().find(f=>(f.id||f.clave)===id)||(S.facturas||[]).find(f=>f.id===id)}
+/* Configuración: datos del emisor */
+function emisorPanel(){
+  const E=emisorCfg();
+  const F2=(k,l,ph='',type='text')=>`<div class="field"><label for="em_${k}">${l}</label><input class="input" id="em_${k}" type="${type}" data-c="emisor" data-k="${k}" value="${esc(E[k]||'')}" placeholder="${esc(ph)}"></div>`;
+  return `<section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2>Datos del emisor (para las facturas)</h2>
+    <p class="small muted" style="margin-top:3px">Aparecen en todas las facturas. El CUIT se toma del certificado de ARCA.</p></div>
+    <button class="btn" data-a="fac-ejemplo">Ver factura de ejemplo</button></div>
+    <div class="panel-body"><div class="form">
+      ${F2('nombreFantasia','Nombre que encabeza la factura','Ej.: Licenciada Apellido, Nombre')}
+      ${F2('razonSocial','Razón social','Como figura en ARCA')}
+      ${F2('domicilio','Domicilio comercial','Calle, número, piso, departamento, localidad').replace('<div class="field">','<div class="field full">')}
+      ${F2('condIva','Condición frente al IVA')}
+      ${F2('iibb','Ingresos brutos','Ej.: EXENTO')}
+      ${F2('inicioAct','Fecha de inicio de actividades','','date')}
+      ${F2('profesional','Firma en el texto de cada sesión','Ej.: Lic. Nombre Apellido')}
+      ${F2('leyendaPie','Leyenda al pie (opcional)','Ej.: Lic. Nombre Apellido')}
+      <div class="field full"><label for="em_plantilla">Texto de cada sesión</label><textarea class="input" id="em_plantilla" data-c="emisor" data-k="plantilla" rows="3">${esc(E.plantilla||PLANTILLA_DEF)}</textarea>
+        <p class="hint">Palabras que se reemplazan solas: {paciente}, {prepaga}, {afiliado}, {fecha}, {profesional}. Lo que va entre corchetes [ ] aparece solo si el paciente tiene prepaga y número de afiliado.</p></div>
+      <div class="field full"><label>Firma y sello</label>
+        <div class="firma-box">${S.firma?`<img src="${esc(S.firma)}" alt="Firma cargada">`:'<span class="muted small">Todavía no cargaste tu firma.</span>'}</div>
+        <div class="btn-group" style="margin-top:8px"><label class="btn">${S.firma?'Cambiar imagen':'Subir imagen de la firma'}<input type="file" accept="image/png,image/jpeg" data-c="firma" hidden></label>${S.firma?'<button class="btn danger" data-a="firma-del">Quitar</button>':''}</div>
+        <p class="hint">Ideal: una foto o escaneo de tu firma y sello sobre papel blanco, o un PNG con fondo transparente.</p></div>
+    </div></div></section>`;
+}
+async function cargarFirma(file){
+  if(!file)return;
+  try{
+    const url=URL.createObjectURL(file);
+    const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url});
+    const k=Math.min(1,600/img.naturalWidth,300/img.naturalHeight);
+    const c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*k);c.height=Math.round(img.naturalHeight*k);
+    const x=c.getContext('2d');x.drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);
+    // Fondo blanco a transparente (para fotos de la firma sobre papel)
+    const d=x.getImageData(0,0,c.width,c.height);for(let i=0;i<d.data.length;i+=4){const v=(d.data[i]+d.data[i+1]+d.data[i+2])/3;if(v>215)d.data[i+3]=0;else if(v>170)d.data[i+3]=Math.round(255*(215-v)/45)}
+    x.putImageData(d,0,0);
+    S.firma=c.toDataURL('image/png');Store.save('firma',{data:S.firma});render();toast('Firma cargada');
+  }catch(e){toast('No se pudo leer la imagen. Probá con un PNG o JPG.')}
+}
+function facturaEjemplo(){
+  const E=emisorCfg();
+  return {simulada:true,entorno:'sim',emisor:E,ptoVta:Number(facCfg().ptoVta)||2,numero:1,fecha:aaaammdd(TODAY),vtoPago:aaaammdd(TODAY),cuitEmisor:'20123456786',
+    receptor:'PACIENTE DE EJEMPLO',docTipo:96,docNro:'30111222',condVenta:'Transferencia bancaria',servDesde:aaaammdd(addDays(TODAY,-21)),servHasta:aaaammdd(TODAY),
+    detalle:[-21,-14,-7,0].map(n=>({texto:textoLinea({fecha:addDays(TODAY,n)},{nombre:'Paciente',apellido:'de Ejemplo',prepaga:'Prepaga',afiliado:'0000000000'}),importe:50000})),
+    importe:200000,cae:'00000000000000',caeVence:aaaammdd(addDays(TODAY,10)),firma:S.firma};
+}
+
 function feriadosPanel(){
   const g=S.config.general;const y=S.ferYear||Number(TODAY.slice(0,4));
   const lista=[];
@@ -795,7 +1028,10 @@ function saveSession(s){
   if(!c.dur) c.dur=defDur();
   {const old=findSession(c.id);
    if(cobraOf(c)){if(!c.registradoEl||!old||!cobraOf(old))c.registradoEl=(old&&cobraOf(old)&&old.registradoEl)||TODAY}
-   else delete c.registradoEl;}
+   else delete c.registradoEl;
+   const cob=x=>item('estadosPago',x?.pago)?.tipo==='cobrado';
+   if(cob(c)){if(!c.pagadoEl)c.pagadoEl=(old&&cob(old)&&old.pagadoEl)||TODAY}
+   else delete c.pagadoEl;}
   const k='ses-'+monthKey(c.fecha);
   const doc=S.ses[k]||(S.ses[k]={items:{}});doc.items=doc.items||{};doc.items[c.id]=c;
   Store.save(k,doc);
@@ -837,13 +1073,14 @@ const ICONS={
   agenda:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   pendientes:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l2.5 2.5L16 9"/><rect x="3.5" y="3.5" width="17" height="17" rx="3"/></svg>',
   semanas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V11M9.5 20V6M15 20v-7M20.5 20V9"/></svg>',
+  facturas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>',
   caja:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10M15 10v10"/></svg>',
   pacientes:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.9.6 3 2.4 3.5 5.5"/></svg>',
   gastos:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M17 7.5c-.6-1.6-2.4-2.5-5-2.5-2.8 0-4.5 1.3-4.5 3.2 0 4.6 10 2.2 10 7 0 2-1.9 3.3-5 3.3-2.7 0-4.7-1-5.5-2.8"/></svg>',
   config:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
   info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>'
 };
-const VIEWS=[['agenda','Agenda'],['semanas','Semanas'],['caja','Caja'],['pacientes','Pacientes'],['gastos','Gastos'],['config','Configuración']];
+const VIEWS=[['agenda','Agenda'],['semanas','Semanas'],['caja','Caja'],['facturas','Facturas'],['pacientes','Pacientes'],['gastos','Gastos'],['config','Configuración']];
 function renderNav(){
   const prof=S.config?.general?.profesional;const n=unmarkedList().length+debtList().length;
   document.getElementById('nav').innerHTML=`
@@ -897,7 +1134,7 @@ function render(){
   renderNav();
   const m=document.getElementById('main');
   S.visible={};
-  m.innerHTML=({agenda:viewAgenda,semanas:viewSemanas,caja:viewCaja,pacientes:viewPacientes,gastos:viewGastos,config:viewConfig}[S.view])();
+  m.innerHTML=({agenda:viewAgenda,facturas:viewFacturas,semanas:viewSemanas,caja:viewCaja,pacientes:viewPacientes,gastos:viewGastos,config:viewConfig}[S.view])();
   if(S.view==='agenda'&&S.ag!=='mes') scrollCalToNow();
   applySorts();
 }
@@ -1479,6 +1716,7 @@ function viewConfig(){
     ${pinPanel()}
     ${feriadosPanel()}
     ${facturacionPanel()}
+    ${emisorPanel()}
     <section class="panel" style="margin-top:16px"><div class="panel-head"><h2>General</h2></div><div class="panel-body"><div class="form cols3">
       <div class="field full"><label for="c_prof">Nombre del profesional o consultorio</label><input class="input" id="c_prof" data-c="gen" data-k="profesional" value="${esc(g.profesional)}" placeholder="Ej.: Lic. Nombre Apellido"></div>
       <div class="field"><label for="c_ini">La agenda empieza a las</label><select class="select" id="c_ini" data-c="gen" data-k="inicio" data-num="1">${hourOpts(g.inicio)}</select></div>
@@ -1528,6 +1766,7 @@ function sesSheet(){
       ${s.extra?`<div class="field"><label for="f_fecha">Fecha</label><input class="input" type="date" id="f_fecha" value="${esc(s.fecha)}"></div>
       <div class="field"><label for="f_hora">Hora</label><input class="input" type="time" id="f_hora" value="${esc(s.hora||'')}"></div>`:''}
       <div class="field"><label for="f_monto">Honorario de esta sesión</label><input class="input" type="number" min="0" step="100" id="f_monto" value="${esc(montoOf(s))}"></div>
+      ${item('estadosPago',s.pago)?.tipo==='cobrado'?`<div class="field"><label for="f_pagado">Fecha de cobro</label><input class="input" type="date" id="f_pagado" value="${esc(s.pagadoEl||s.fecha)}"></div>`:''}
       <div class="field"><label for="f_medio">Medio de pago</label><select class="select" id="f_medio">${options('mediosPago',s.medio||p?.medioPago||'','Sin especificar')}</select></div>
       <div class="field full"><label for="f_nota">Nota administrativa</label><textarea class="input" id="f_nota" placeholder="Ej.: avisó por WhatsApp, pagó con recargo">${esc(s.nota||'')}</textarea></div>
       <div class="full"><button class="btn" data-a="sheet-save">Guardar estos datos</button></div></div></details>
@@ -1597,6 +1836,8 @@ function renderPacDialog(){
       <div class="field"><label>Supervisión</label><label class="check"><input type="checkbox" name="supervisa" ${e.supervisa?'checked':''}>Se supervisa el caso</label></div>
       <div class="fieldset-title">Cobro</div>
       ${F('honorario','Honorario por sesión',e.honorario,'number','min="0" step="100"')}
+      ${F('prepaga','Obra social o prepaga',e.prepaga,'text','placeholder="Ej.: Osde Flux" autocomplete="off"')}
+      ${F('afiliado','Número de afiliado',e.afiliado,'text','autocomplete="off"')}
       ${Sel('medioPago','Medio de pago habitual','mediosPago',e.medioPago,'Sin especificar')}
       ${Sel('facturacion','Facturación','facturacion',e.facturacion,'Sin especificar')}
       <p class="hint full">Cambiar el honorario no modifica las sesiones que ya marcaste.</p>
@@ -1737,8 +1978,14 @@ document.addEventListener('click',async ev=>{
       if(!fecha){toast('Elegí la fecha');break}
       const g=S.config.general;g.feriadosExtra=[...(g.feriadosExtra||[]).filter(f=>f.fecha!==fecha),{fecha,nombre,tipo}];S.ferYear=Number(fecha.slice(0,4));saveConfig();render();toast('Feriado agregado');break}
     case 'fac-test':{S.facPrueba={cargando:true};render();
-      try{S.facPrueba=await llamarServidor({accion:'estado',ptoVta:Number(facCfg().ptoVta)||1})}catch(e){S.facPrueba={error:e.message}}
+      try{S.facPrueba=await llamarServidor({accion:'estado',ptoVta:Number(facCfg().ptoVta)||1});if(S.facPrueba.entorno&&S.facPrueba.entorno!==S.config.general.facturacion?.entorno){S.config.general.facturacion={...facCfg(),entorno:S.facPrueba.entorno};saveConfig()}}catch(e){S.facPrueba={error:e.message}}
       if(S.view==='config')render();break}
+    case 'fac-mes':{const n=Number(a.dataset.n);S.facMes=n?addMonths(S.facMes||monthKey(TODAY),n):monthKey(TODAY);render();break}
+    case 'fac-prev': facPreview(a.dataset.pid);break;
+    case 'fac-emit': facEmitir();break;
+    case 'fac-pdf':{const f=facturaPorId(a.dataset.id);if(f)descargarPDF({...f,firma:S.firma});break}
+    case 'fac-ejemplo': descargarPDF(facturaEjemplo());break;
+    case 'firma-del':{S.firma='';Store.save('firma',{data:''});render();toast('Firma quitada');break}
     case 'caja-view': S.cajaV=a.dataset.v;render();break;
     case 'caja-nav':{const n=Number(a.dataset.n);const c=S.cajaCur||TODAY;
       S.cajaCur=!n?TODAY:S.cajaV==='dia'?addDays(c,n):S.cajaV==='semana'?addDays(c,7*n):addMonths(monthKey(c),n)+'-01';render();break}
@@ -1788,7 +2035,7 @@ document.addEventListener('click',async ev=>{
     case 'sheet-save':{
       const e=S.edit;const s={...e};
       if(e.extra){s.fecha=val('f_fecha')||e.fecha;s.hora=val('f_hora')||e.hora}
-      s.medio=val('f_medio');s.nota=val('f_nota').trim();const mv=val('f_monto');s.monto=mv===''?null:Number(mv);
+      s.medio=val('f_medio');s.nota=val('f_nota').trim();if(val('f_pagado'))s.pagadoEl=val('f_pagado');const mv=val('f_monto');s.monto=mv===''?null:Number(mv);
       if(e.extra&&monthKey(s.fecha)!==monthKey(e.fecha)) deleteSession(e);
       saveSession(s);closeDlg();toast('Cambios guardados');break}
     case 'new-save':{
@@ -1907,6 +2154,8 @@ document.addEventListener('change',async ev=>{
   else if(c==='pac-f'){S.filtroEstado=el.value;render()}
   else if(c==='pin-min'||c==='pin-salir'){const p=pinCfg();if(p){if(c==='pin-min')p.min=Number(el.value);else p.alSalir=el.checked;pinSave(p);toast('Guardado')}}
   else if(c==='fac'){const g=S.config.general;g.facturacion={...facCfg(),[el.dataset.k]:el.dataset.k==='ptoVta'?Math.max(1,Number(el.value)||1):el.value.trim()};saveConfig();S.facPrueba=null}
+  else if(c==='emisor'){const g=S.config.general;g.emisor={...emisorCfg(),[el.dataset.k]:el.value.trim()};saveConfig()}
+  else if(c==='firma'){cargarFirma(el.files?.[0]);el.value=''}
   else if(c==='gen'){const k=el.dataset.k;S.config.general[k]=el.type==='checkbox'?el.checked:el.dataset.num?Number(el.value):el.value.trim();saveConfig();renderNav();applyLook();if(el.dataset.k==='feriadosAuto')render()}
   else if(c==='cfg'){
     const i=item(el.dataset.list,el.dataset.id);if(!i)return;const k=el.dataset.k;
@@ -1998,6 +2247,7 @@ document.addEventListener('pointerup',async ()=>{
   else { for(const [id,d] of Object.entries(docs)) applyDoc(id,d); }
   gate(null);
   setTimeout(autoBackup,3000);
+  if(Store.fb&&FB.facturasCol){try{FB.fns.onSnapshot(FB.facturasCol(),snap=>{S.facturas=snap.docs.map(d=>({id:d.id,...d.data()}));if(S.view==='facturas'&&!S.dlgOpen)render()},()=>{})}catch(e){}}
   setTimeout(()=>checkOverdue(false),1500);
   setInterval(()=>{if(document.visibilityState==='visible')checkOverdue(false)},30*60*1000);
   S.ag=S.config.general.vistaInicial||(window.innerWidth<760?'dia':'semana');

@@ -1,7 +1,7 @@
 /* Service worker: permite instalar la app y abrirla sin conexión.
    Cuando cambies cualquier archivo de la app, subí el número de VERSION
    para que los dispositivos descarguen la versión nueva. */
-const VERSION = 'v10';
+const VERSION = 'v11';
 const CACHE = 'consultorio-' + VERSION;
 const APP = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'firebase.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
@@ -25,7 +25,7 @@ self.addEventListener('fetch', e => {
     return;
   }
   // Tipografías de Google y librerías de Firebase: se guardan la primera vez que se usan.
-  if (url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com') || (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/'))) {
+  if (url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com') || (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) || url.hostname === 'cdnjs.cloudflare.com') {
     e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request).then(r => {
       const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r;
     })));

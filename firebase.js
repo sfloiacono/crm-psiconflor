@@ -43,6 +43,8 @@ window.FB = {
   datos: () => collection(db, 'consultorios', CONSULTORIO, 'datos'),
   datoRef: id => doc(db, 'consultorios', CONSULTORIO, 'datos', id),
   archivoRef: id => doc(db, 'consultorios', CONSULTORIO, 'archivos', id),
-  respaldoRef: id => doc(db, 'consultorios', CONSULTORIO, 'respaldos', id)
+  respaldoRef: id => doc(db, 'consultorios', CONSULTORIO, 'respaldos', id),
+  facturasCol: () => collection(db, 'consultorios', CONSULTORIO, 'facturas'),
+  facturaRef: id => doc(db, 'consultorios', CONSULTORIO, 'facturas', id)
 };
 window.dispatchEvent(new Event('fb-ready'));

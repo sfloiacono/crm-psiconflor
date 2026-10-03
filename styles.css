@@ -537,3 +537,12 @@ tr.fer-off td:last-child{opacity:1;text-decoration:none}
 .fac-dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:0}
 .fac-dl dt{color:var(--muted);font-size:.86rem}
 .fac-dl dd{margin:0;font-weight:600}
+
+/* ===== Facturas ===== */
+.fac-lines{border:1px solid var(--line);border-radius:10px;margin:14px 0 8px;overflow:hidden}
+.fac-line{display:flex;justify-content:space-between;gap:16px;padding:9px 12px;font-size:.86rem;border-top:1px solid var(--line)}
+.fac-line:first-child{border-top:0}
+.fac-line b{white-space:nowrap}
+.fac-total{display:flex;justify-content:space-between;font-size:1.05rem;padding:6px 12px 10px}
+.firma-box{min-height:70px;border:1px dashed var(--line);border-radius:10px;display:grid;place-items:center;padding:8px;background:#fff}
+.firma-box img{max-height:110px;max-width:100%}
