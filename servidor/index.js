@@ -48,6 +48,7 @@ async function estado(datos) {
   const pto = Number(datos.ptoVta || 1);
   out.ptoVta = pto;
   out.ultimoNumero = await arca.ultimoComprobante(ENV, t, c.cuit, pto, 11);
+  out.ultimoRecibo = await arca.ultimoComprobante(ENV, t, c.cuit, pto, 15);
   return out;
 }
 
@@ -60,6 +61,8 @@ async function emitir(datos, usuario) {
   const docNro = String(datos.docNro || '0').replace(/\D/g, '') || '0';
   const condIva = Number(datos.condIva || 5);
   const clave = String(datos.clave || '').replace(/[^\w\-]/g, '').slice(0, 120);
+  const tipo = Number(datos.tipo || 11);
+  if (![11, 15].includes(tipo)) throw new ErrorUsuario('El tipo de comprobante no es válido.');
   if (!clave) throw new ErrorUsuario('Falta el identificador de la factura.');
   if (!(pto >= 1 && pto <= 99998)) throw new ErrorUsuario('El punto de venta no es válido.');
   if (!(importe > 0 && importe < 1e9)) throw new ErrorUsuario('El importe tiene que ser mayor que cero.');
@@ -89,9 +92,9 @@ async function emitir(datos, usuario) {
     const fecha = arca.hoyAR();
     let r, numero;
     for (let intento = 0; intento < 2; intento++) {
-      numero = (await arca.ultimoComprobante(ENV, t, c.cuit, pto, 11)) + 1;
+      numero = (await arca.ultimoComprobante(ENV, t, c.cuit, pto, tipo)) + 1;
       r = await arca.solicitarFacturaC(ENV, t, c.cuit, pto, {
-        numero, fecha, docTipo, docNro, importe, condIva,
+        tipo, numero, fecha, docTipo, docNro, importe, condIva,
         servDesde: datos.servDesde, servHasta: datos.servHasta, vtoPago: fecha
       });
       // 10016: el número ya fue usado (otra factura se emitió al mismo tiempo): reintenta una vez
@@ -102,7 +105,7 @@ async function emitir(datos, usuario) {
       return { ok: false, errores: [...r.errores, ...r.observaciones] };
     }
     const factura = {
-      ok: true, estado: 'emitida', entorno: ENV, clave, tipo: 11, ptoVta: pto, numero, fecha,
+      ok: true, estado: 'emitida', entorno: ENV, clave, tipo, ptoVta: pto, numero, fecha,
       cae: r.cae, caeVence: r.caeVence, observaciones: r.observaciones,
       importe: Math.round(importe * 100) / 100, docTipo, docNro, condIva,
       servDesde: datos.servDesde, servHasta: datos.servHasta,

@@ -1,7 +1,7 @@
 /* Service worker: permite instalar la app y abrirla sin conexión.
    Cuando cambies cualquier archivo de la app, subí el número de VERSION
    para que los dispositivos descarguen la versión nueva. */
-const VERSION = 'v11';
+const VERSION = 'v13';
 const CACHE = 'consultorio-' + VERSION;
 const APP = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'firebase.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];

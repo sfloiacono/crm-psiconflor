@@ -546,3 +546,10 @@ tr.fer-off td:last-child{opacity:1;text-decoration:none}
 .fac-total{display:flex;justify-content:space-between;font-size:1.05rem;padding:6px 12px 10px}
 .firma-box{min-height:70px;border:1px dashed var(--line);border-radius:10px;display:grid;place-items:center;padding:8px;background:#fff}
 .firma-box img{max-height:110px;max-width:100%}
+
+.btn.wa{border-color:#25D366;color:#128C4A}
+.btn.wa:hover{background:color-mix(in srgb,#25D366 12%,var(--surface))}
+.send-step{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.send-step ol{margin:4px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.nowrap{white-space:nowrap}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.wa{color:#6EE09A}}

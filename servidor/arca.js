@@ -109,8 +109,9 @@ async function ultimoComprobante(env, a, cuit, ptoVta, tipo = 11) {
 
 const imp = n => (Math.round(Number(n) * 100) / 100).toFixed(2);
 
-/* Factura C (código 11). f = {numero, fecha, docTipo, docNro, importe, servDesde, servHasta, vtoPago, condIva} */
+/* Comprobante C: 11 = Factura C, 15 = Recibo C. f = {tipo, numero, fecha, docTipo, docNro, importe, servDesde, servHasta, vtoPago, condIva} */
 async function solicitarFacturaC(env, a, cuit, ptoVta, f) {
+  const tipo = f.tipo === 15 ? 15 : 11;
   const det =
     `<Concepto>2</Concepto><DocTipo>${f.docTipo}</DocTipo><DocNro>${f.docNro}</DocNro>` +
     `<CbteDesde>${f.numero}</CbteDesde><CbteHasta>${f.numero}</CbteHasta><CbteFch>${f.fecha}</CbteFch>` +
@@ -119,7 +120,7 @@ async function solicitarFacturaC(env, a, cuit, ptoVta, f) {
     `<FchServDesde>${f.servDesde}</FchServDesde><FchServHasta>${f.servHasta}</FchServHasta><FchVtoPago>${f.vtoPago}</FchVtoPago>` +
     `<MonId>PES</MonId><MonCotiz>1</MonCotiz><CondicionIVAReceptorId>${f.condIva}</CondicionIVAReceptorId>`;
   const b = await soap(URLS[env].wsfe, `"${NS}FECAESolicitar"`,
-    `<FECAESolicitar xmlns="${NS}">${auth(a, cuit)}<FeCAEReq><FeCabReq><CantReg>1</CantReg><PtoVta>${ptoVta}</PtoVta><CbteTipo>11</CbteTipo></FeCabReq>` +
+    `<FECAESolicitar xmlns="${NS}">${auth(a, cuit)}<FeCAEReq><FeCabReq><CantReg>1</CantReg><PtoVta>${ptoVta}</PtoVta><CbteTipo>${tipo}</CbteTipo></FeCabReq>` +
     `<FeDetReq><FECAEDetRequest>${det}</FECAEDetRequest></FeDetReq></FeCAEReq></FECAESolicitar>`);
   const r = b.FECAESolicitarResponse.FECAESolicitarResult;
   const d = lista(r?.FeDetResp?.FECAEDetResponse)[0] || {};
